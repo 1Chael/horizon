@@ -2,6 +2,120 @@ use super::*;
 use std::sync::Mutex;
 
 #[test]
+fn export_coverage_counts_reachable_nodes_and_attributes_blocker_depth() {
+    let mut graph = DensityGraph::new();
+    let left = graph.insert(GraphNode::Constant(0.125)).unwrap();
+    let right = graph.insert(GraphNode::Constant(0.125)).unwrap();
+    // Both constants intern to one node.
+    assert_eq!(left, right);
+    let root = graph
+        .insert(GraphNode::Binary {
+            kind: GraphBinary::Add,
+            left,
+            right,
+        })
+        .unwrap();
+    let cached = graph.insert(GraphNode::Cache(root)).unwrap();
+    let islands = graph.insert(GraphNode::EndIslands).unwrap();
+    let blocked = graph
+        .insert(GraphNode::Binary {
+            kind: GraphBinary::Add,
+            left: cached,
+            right: islands,
+        })
+        .unwrap();
+    let compiler = DensityCompiler::new(graph);
+
+    let coverage = compiler.export_coverage(root);
+    assert_eq!(coverage.reachable, 2);
+    assert!(coverage.blockers.is_empty());
+
+    let coverage = compiler.export_coverage(blocked);
+    assert_eq!(coverage.reachable, 5);
+    // `Cache` is an identity for a pointwise program, so only the noise kind
+    // remains a blocker.
+    assert_eq!(
+        coverage.blockers,
+        vec![ExportBlocker {
+            node_kind: "EndIslands",
+            reason: ProgramExportReason::NoiseKind,
+            depth: 1,
+        }]
+    );
+}
+
+#[test]
+fn program_export_preserves_trivial_add_and_reports_context_nodes() {
+    let mut graph = DensityGraph::new();
+    let left = graph.insert(GraphNode::Constant(0.125)).unwrap();
+    let right = graph.insert(GraphNode::Constant(0.125)).unwrap();
+    let root = graph
+        .insert(GraphNode::Binary {
+            kind: GraphBinary::Add,
+            left,
+            right,
+        })
+        .unwrap();
+    let cached = graph.insert(GraphNode::Cache(root)).unwrap();
+    let islands = graph.insert(GraphNode::EndIslands).unwrap();
+    let blocked = graph
+        .insert(GraphNode::Binary {
+            kind: GraphBinary::Add,
+            left: cached,
+            right: islands,
+        })
+        .unwrap();
+    let bound = graph
+        .bind(
+            Arc::new(ConstantSampler(0.25)),
+            Interval::exact(0.25).unwrap(),
+            7,
+        )
+        .unwrap();
+    let mut compiler = DensityCompiler::new(graph);
+    let program = compiler.export_to_program(root).unwrap();
+    let sampler = compiler.get_sampler(root).unwrap();
+    let volume = DensityVolume::new([16; 3], [0; 3], [1; 3]).unwrap();
+    let mut expected = vec![0.0; volume.size()];
+    sampler
+        .sample_volume(&mut SamplerContext::default(), &mut expected, volume)
+        .unwrap();
+    let actual = program.evaluate(crate::density::program::PerlinSample::default());
+    assert!(
+        expected
+            .iter()
+            .all(|value| value.to_bits() == actual.to_bits())
+    );
+
+    // `Cache` unwraps to its child: same program, same bits at every point.
+    let cached_program = compiler.try_export_to_program(cached).unwrap();
+    for cell in -2..=2 {
+        let sample = crate::density::program::PerlinSample {
+            cell: [cell, cell * 3, -cell],
+            offset: [0.25, 0.5, 0.75],
+            fade_y: 0.5,
+            ..Default::default()
+        };
+        assert_eq!(
+            cached_program.evaluate_fma(sample).to_bits(),
+            program.evaluate_fma(sample).to_bits()
+        );
+    }
+    let failure = compiler.try_export_to_program(islands).unwrap_err();
+    assert_eq!(failure.node_kind, "EndIslands");
+    assert_eq!(failure.reason, ProgramExportReason::NoiseKind);
+    let failure = compiler.try_export_to_program(bound).unwrap_err();
+    assert_eq!(failure.node_kind, "bound sampler");
+    assert_eq!(failure.reason, ProgramExportReason::BoundSampler);
+    let blockers = compiler.export_blockers(blocked);
+    assert_eq!(blockers.len(), 1);
+    assert!(blockers.contains(&ProgramExportError {
+        node_kind: "EndIslands",
+        reason: ProgramExportReason::NoiseKind,
+    }));
+}
+
+#[test]
 fn power_literal_selection_retains_signed_zeros_and_negative_fallback_behavior() {
     let signaling_base = UnarySampler {
         input: Arc::new(ConstantSampler(0.0)),

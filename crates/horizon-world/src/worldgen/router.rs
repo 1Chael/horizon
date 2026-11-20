@@ -110,7 +110,7 @@ impl RouterSamplers {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use horizon_core::density::SamplerContext;
+    use horizon_core::density::{SamplerContext, program::PerlinSample};
     use std::collections::BTreeMap;
 
     #[test]
@@ -164,5 +164,31 @@ mod tests {
                 -0.5
             );
         }
+    }
+
+    #[test]
+    fn trivial_router_final_density_exports_and_matches_cpu_sampler() {
+        let mut registry = DensityRegistry::from_json(&BTreeMap::new(), &BTreeMap::new()).unwrap();
+        let router = NoiseRouter::from_json(
+            r#"{
+                "temperature": 0, "vegetation": 0, "continents": 0,
+                "erosion": 0, "depth": 0, "ridges": 0,
+                "chunk_surface_level": 0,
+                "final_density": {"type":"minecraft:add", "left":0.125, "right":0.125}
+            }"#,
+            &mut registry,
+        )
+        .unwrap();
+        let final_id = router.function(RouterField::FinalDensity);
+        let mut compiler = DensityCompiler::new_seeded(registry.into_graph(), 0, false);
+        let exported = compiler.export_to_program(final_id).unwrap();
+        let sampler = compiler.get_sampler(final_id).unwrap();
+        let sampled = sampler
+            .sample_value(&mut SamplerContext::default(), [0, 0, 0])
+            .unwrap();
+        assert_eq!(
+            exported.evaluate(PerlinSample::default()).to_bits(),
+            sampled.to_bits()
+        );
     }
 }

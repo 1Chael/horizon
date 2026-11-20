@@ -37,6 +37,10 @@ To play, use [the launcher](../launcher/README.md); the project site is [playhor
 
 - [Rust rewrite status](rust-parity.md): completion criteria, how to reproduce the validation, and per-area scope.
 - [Parity workflow](parity-workflow.md): `tools/parity.py`, the gate, other machines, merging.
+- [GPU noise parity](gpu-noise-parity.md): the WGSL Perlin probe, locked per-adapter FMA contract and its coverage limits.
+- [RADV divergence diagnosis](radv-divergence.md): explicit-FMA tolerance, backend probes and remaining scope.
+- [Density-program IR design](density-ir-design.md): density graph export subset, CPU/GPU lowering plan, and representability limits.
+- [GPU adapter enablement](gpu-adapter-enablement.md): host inventory, WGPU adapter selection attempts, and the device-passthrough blocker.
 - [CI runners](ci-runners.md): which jobs run on GitHub's runners and which on ours (the desktop, playhorizon, the Mac mini), the `SELF_HOSTED_CI` switch, and where a fork's pull request may run.
 - Area notes: [block behaviours and ticking](parity/blocks.md), [section meshing](parity/meshing.md).
 - [Port ledger](port-ledger.md): `tools/port_ledger.py`, every vanilla method next to the Rust functions that port it, both ways, with the gaps where a port isn't wired like vanilla.

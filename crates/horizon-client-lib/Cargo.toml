@@ -143,6 +143,50 @@ name = "gen_light_bench"
 path = "../horizon-client/examples/gen_light_bench.rs"
 
 [[example]]
+name = "wgpu_perlin_probe"
+path = "../horizon-client/examples/wgpu_perlin_probe.rs"
+
+[[example]]
+name = "gpu_leaves_probe"
+path = "../horizon-client/examples/gpu_leaves_probe.rs"
+
+[[example]]
+name = "gpu_leaves_hybrid"
+path = "../horizon-client/examples/gpu_leaves_hybrid.rs"
+
+[[example]]
+name = "wgpu_lattice_probe"
+path = "../horizon-client/examples/wgpu_lattice_probe.rs"
+
+[[example]]
+name = "wgpu_density_interp_probe"
+path = "../horizon-client/examples/wgpu_density_interp_probe.rs"
+
+[[example]]
+name = "wgpu_density_graph_probe"
+path = "../horizon-client/examples/wgpu_density_graph_probe.rs"
+
+[[example]]
+name = "wgpu_adapter_inventory"
+path = "../horizon-client/examples/wgpu_adapter_inventory.rs"
+
+[[example]]
+name = "wgpu_sqrt_probe"
+path = "../horizon-client/examples/wgpu_sqrt_probe.rs"
+
+[[example]]
+name = "density_program_probe"
+path = "../horizon-client/examples/density_program_probe.rs"
+
+[[example]]
+name = "perlin_spirv_probe"
+path = "../horizon-client/examples/perlin_spirv_probe.rs"
+
+[[example]]
+name = "radv_divergence_probe"
+path = "../horizon-client/examples/radv_divergence_probe.rs"
+
+[[example]]
 name = "gameplay_decode_profile"
 path = "../horizon-client/examples/gameplay_decode_profile.rs"
 

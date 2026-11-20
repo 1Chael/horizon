@@ -1,0 +1,75 @@
+== host ==
+Linux 7.2.0-1-cachyos-bore-lto x86_64
+
+== adapter ==
+	apiVersion         = 1.4.354
+	driverVersion      = 26.2.1
+	deviceType         = PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU
+	deviceName         = AMD Radeon Graphics (RADV REMBRANDT)
+	driverID           = DRIVER_ID_MESA_RADV
+	driverName         = radv
+	driverInfo         = Mesa 26.2.1-arch3.1
+	conformanceVersion = 1.4.5.3
+
+== float controls ==
+	denormBehaviorIndependence            = SHADER_FLOAT_CONTROLS_INDEPENDENCE_32_BIT_ONLY
+	roundingModeIndependence              = SHADER_FLOAT_CONTROLS_INDEPENDENCE_32_BIT_ONLY
+	shaderDenormFlushToZeroFloat32        = true
+	shaderDenormPreserveFloat32           = true
+	shaderRoundingModeRTEFloat32          = true
+	shaderRoundingModeRTZFloat32          = true
+	shaderSignedZeroInfNanPreserveFloat32 = true
+VK_KHR_shader_float_controls2 = present
+
+== build ==
+
+== base ==
+assembly: hand-written SPIR-V, 414 lines, 34 NoContraction decorations, 12 explicit Fma
+adapter: AMD Radeon Graphics (RADV REMBRANDT) (IntegratedGpu, "radv"); driver Mesa 26.2.1-arch3.1; backend Vulkan
+features: passthrough_shaders=true shader_f64=true float_controls_requested=false
+spirv: 1567 words assembled by spirv-as
+poll: Ok(QueueEmpty)
+rung                     mismatches           max_abs
+R1 leaf                       0/60000           0e0
+R2 alpha 0                    0/60000           0e0
+R2 alpha 0.375                0/60000           0e0
+R2 alpha 1                    0/60000           0e0
+R3 spline                     0/60000           0e0
+R4 coordinate offset          0/60000           0e0
+R5 add/mul/blend              0/60000           0e0
+R6 router root                0/60000           0e0
+
+== --float-controls ==
+assembly: hand-written SPIR-V, 420 lines, 34 NoContraction decorations, 12 explicit Fma
+adapter: AMD Radeon Graphics (RADV REMBRANDT) (IntegratedGpu, "radv"); driver Mesa 26.2.1-arch3.1; backend Vulkan
+features: passthrough_shaders=true shader_f64=true float_controls_requested=true
+spirv: 1588 words assembled by spirv-as
+poll: Ok(QueueEmpty)
+rung                     mismatches           max_abs
+R1 leaf                       0/60000           0e0
+R2 alpha 0                    0/60000           0e0
+R2 alpha 0.375                0/60000           0e0
+R2 alpha 1                    0/60000           0e0
+R3 spline                     0/60000           0e0
+R4 coordinate offset          0/60000           0e0
+R5 add/mul/blend              0/60000           0e0
+R6 router root                0/60000           0e0
+
+== --allow-contraction ==
+assembly: hand-written SPIR-V, 380 lines, 0 NoContraction decorations, 12 explicit Fma
+adapter: AMD Radeon Graphics (RADV REMBRANDT) (IntegratedGpu, "radv"); driver Mesa 26.2.1-arch3.1; backend Vulkan
+features: passthrough_shaders=true shader_f64=true float_controls_requested=false
+spirv: 1465 words assembled by spirv-as
+poll: Ok(QueueEmpty)
+rung                     mismatches           max_abs
+R1 leaf                    8986/60000           2.3841858e-7  first 10: want bed41cce got bed41ccc
+R2 alpha 0                 8986/60000           2.3841858e-7  first 10: want bed41cce got bed41ccc
+R2 alpha 0.375             7587/60000           1.4901161e-7  first 10: want beb49201 got beb49200
+R2 alpha 1                    0/60000           0e0
+R3 spline                  2064/60000           1.7881393e-7  first 10: want bc9dee12 got bc9dede7
+R4 coordinate offset       4095/60000           2.0861626e-7  first 20: want bd7a5668 got bd7a5670
+R5 add/mul/blend           7045/60000           1.0430813e-7  first 10: want bdd33268 got bdd33265
+R6 router root                0/60000           0e0
+FAILED (1)
+
+RESULT: at least one variant diverged (see tables above)

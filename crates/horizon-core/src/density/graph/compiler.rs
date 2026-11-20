@@ -1,4 +1,39 @@
 use super::*;
+use crate::density::program::{BinaryKind, DensityProgram, UnaryKind};
+
+/// One reachable graph node that prevents a pointwise export.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExportBlocker {
+    pub node_kind: &'static str,
+    pub reason: ProgramExportReason,
+    /// Shortest distance from the queried root; the root itself is depth 0.
+    pub depth: usize,
+}
+
+/// How much of one definition graph a pointwise export covers.
+#[derive(Clone, Debug, Default)]
+pub struct ExportCoverage {
+    /// Distinct graph nodes reachable from the root.
+    pub reachable: usize,
+    /// Every reachable node that prevents export, once per node, ordered by
+    /// depth and then reason.
+    pub blockers: Vec<ExportBlocker>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProgramExportReason {
+    NeedsContext,
+    BoundSampler,
+    NoiseKind,
+    UnsupportedOperation,
+    UnknownFunction,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProgramExportError {
+    pub node_kind: &'static str,
+    pub reason: ProgramExportReason,
+}
 
 /// A compiler and cache-ID namespace for one immutable set of density inputs.
 /// Share resulting samplers across workers, with a separate SamplerContext per
@@ -52,6 +87,219 @@ impl DensityCompiler {
         let sampler = self.compile_raw(optimized)?;
         self.samplers.insert(id, sampler.clone());
         Ok(sampler)
+    }
+
+    /// Export the directly representable pointwise subset of this definition
+    /// graph. CPU sampler compilation remains independent and unchanged.
+    pub fn export_to_program(&self, id: FunctionId) -> Option<DensityProgram> {
+        self.try_export_to_program(id).ok()
+    }
+
+    /// Detailed form of [`Self::export_to_program`], including the first node
+    /// that prevents a pointwise export.
+    pub fn try_export_to_program(
+        &self,
+        id: FunctionId,
+    ) -> Result<DensityProgram, ProgramExportError> {
+        let entry = self.graph.entry(id).map_err(|_| ProgramExportError {
+            node_kind: "unknown function",
+            reason: ProgramExportReason::UnknownFunction,
+        })?;
+        let Definition::Node(node) = &entry.definition else {
+            return Err(ProgramExportError {
+                node_kind: "bound sampler",
+                reason: ProgramExportReason::BoundSampler,
+            });
+        };
+        let unsupported = |node_kind, reason| ProgramExportError { node_kind, reason };
+        match node {
+            GraphNode::Constant(value) => Ok(DensityProgram::Constant(*value)),
+            GraphNode::Reference { input, .. } => self.try_export_to_program(*input),
+            GraphNode::Binary { kind, left, right } => {
+                let left = Box::new(self.try_export_to_program(*left)?);
+                let right = Box::new(self.try_export_to_program(*right)?);
+                let kind = match kind {
+                    GraphBinary::Add => BinaryKind::Add,
+                    GraphBinary::Subtract => BinaryKind::Subtract,
+                    GraphBinary::Multiply => BinaryKind::Multiply,
+                    GraphBinary::Divide => BinaryKind::Divide,
+                    GraphBinary::Minimum => BinaryKind::Minimum,
+                    GraphBinary::Maximum => BinaryKind::Maximum,
+                };
+                Ok(DensityProgram::Binary { kind, left, right })
+            }
+            GraphNode::Lerp {
+                alpha,
+                first,
+                second,
+            } => Ok(DensityProgram::Lerp {
+                alpha: Box::new(self.try_export_to_program(*alpha)?),
+                first: Box::new(self.try_export_to_program(*first)?),
+                second: Box::new(self.try_export_to_program(*second)?),
+            }),
+            GraphNode::Noise { .. }
+            | GraphNode::OffsetNoise { .. }
+            | GraphNode::BlendedNoise(_)
+            | GraphNode::EndIslands => Err(unsupported(
+                graph_node_name(node),
+                ProgramExportReason::NoiseKind,
+            )),
+            // `Cache` is memoization of its child at one position (see
+            // `density/cache.rs`: the scalar path stores one packed
+            // `BlockPos` and returns it only for the same position), so for a
+            // pointwise program it is the identity. `Interpolated` is not:
+            // it changes the sampled lattice.
+            GraphNode::Cache(input) => self.try_export_to_program(*input),
+            GraphNode::WorldField(_)
+            | GraphNode::BlendDensity(_)
+            | GraphNode::Slice { .. }
+            | GraphNode::Interpolated { .. }
+            | GraphNode::Surface { .. } => Err(unsupported(
+                graph_node_name(node),
+                ProgramExportReason::NeedsContext,
+            )),
+            GraphNode::Clamp { input, min, max } => Ok(DensityProgram::Clamp {
+                input: Box::new(self.try_export_to_program(*input)?),
+                min: *min,
+                max: *max,
+            }),
+            GraphNode::Unary { kind, input } => {
+                let kind = match kind {
+                    GraphUnary::Abs => UnaryKind::Abs,
+                    GraphUnary::Negate => UnaryKind::Negate,
+                    GraphUnary::Square => UnaryKind::Square,
+                    GraphUnary::Cube => UnaryKind::Cube,
+                    GraphUnary::HalfNegative => UnaryKind::HalfNegative,
+                    GraphUnary::QuarterNegative => UnaryKind::QuarterNegative,
+                    GraphUnary::Reciprocal => UnaryKind::Reciprocal,
+                    GraphUnary::Sign => UnaryKind::Sign,
+                    GraphUnary::Squeeze => UnaryKind::Squeeze,
+                    // `f64` libm behind a `f32` result: not bit-reproducible
+                    // on a GPU, so these stay off the exact tier.
+                    GraphUnary::Sqrt | GraphUnary::Log => {
+                        return Err(unsupported(
+                            "Unary",
+                            ProgramExportReason::UnsupportedOperation,
+                        ));
+                    }
+                };
+                Ok(DensityProgram::Unary {
+                    kind,
+                    input: Box::new(self.try_export_to_program(*input)?),
+                })
+            }
+            GraphNode::Spline(_) => Err(unsupported(
+                "Spline",
+                ProgramExportReason::UnsupportedOperation,
+            )),
+            GraphNode::Gradient { .. }
+            | GraphNode::Round { .. }
+            | GraphNode::Power { .. }
+            | GraphNode::Choice { .. }
+            | GraphNode::IntervalSelect { .. }
+            | GraphNode::DistanceToPoint { .. } => Err(unsupported(
+                graph_node_name(node),
+                ProgramExportReason::UnsupportedOperation,
+            )),
+        }
+    }
+
+    /// Return each reachable node that prevents export, once per graph node.
+    /// This gives callers a complete coverage report instead of only the first
+    /// error returned by [`Self::try_export_to_program`].
+    pub fn export_blockers(&self, id: FunctionId) -> Vec<ProgramExportError> {
+        fn visit(
+            compiler: &DensityCompiler,
+            id: FunctionId,
+            seen: &mut std::collections::HashSet<FunctionId>,
+            blockers: &mut Vec<ProgramExportError>,
+        ) {
+            if !seen.insert(id) {
+                return;
+            }
+            let Ok(entry) = compiler.graph.entry(id) else {
+                blockers.push(ProgramExportError {
+                    node_kind: "unknown function",
+                    reason: ProgramExportReason::UnknownFunction,
+                });
+                return;
+            };
+            let Definition::Node(mut node) = entry.definition.clone() else {
+                blockers.push(ProgramExportError {
+                    node_kind: "bound sampler",
+                    reason: ProgramExportReason::BoundSampler,
+                });
+                return;
+            };
+            if let Some(failure) = export_node_failure(&node) {
+                blockers.push(failure);
+            }
+            for child in node.children_mut() {
+                visit(compiler, *child, seen, blockers);
+            }
+        }
+
+        let mut blockers = Vec::new();
+        visit(
+            self,
+            id,
+            &mut std::collections::HashSet::new(),
+            &mut blockers,
+        );
+        blockers
+    }
+
+    /// Coverage report for one root: the number of distinct reachable graph
+    /// nodes and every node that prevents a pointwise export, each with its
+    /// shortest depth from the root.
+    ///
+    /// [`Self::export_blockers`] stops at the first failure along a path and
+    /// reports no depth. This walks the whole graph once, which is what an
+    /// export-coverage measurement of a large decoded router needs.
+    pub fn export_coverage(&self, id: FunctionId) -> ExportCoverage {
+        let mut depths: HashMap<FunctionId, usize> = HashMap::new();
+        let mut pending = vec![(id, 0usize)];
+        while let Some((node, depth)) = pending.pop() {
+            if depths.get(&node).is_some_and(|known| *known <= depth) {
+                continue;
+            }
+            depths.insert(node, depth);
+            let Ok(entry) = self.graph.entry(node) else {
+                continue;
+            };
+            let Definition::Node(mut definition) = entry.definition.clone() else {
+                continue;
+            };
+            for child in definition.children_mut() {
+                pending.push((*child, depth + 1));
+            }
+        }
+        let mut blockers = Vec::new();
+        for (node, depth) in &depths {
+            let Ok(entry) = self.graph.entry(*node) else {
+                continue;
+            };
+            let blocker = match &entry.definition {
+                Definition::Node(definition) => {
+                    export_node_failure(definition).map(|failure| ExportBlocker {
+                        node_kind: failure.node_kind,
+                        reason: failure.reason,
+                        depth: *depth,
+                    })
+                }
+                Definition::Bound { .. } => Some(ExportBlocker {
+                    node_kind: "bound sampler",
+                    reason: ProgramExportReason::BoundSampler,
+                    depth: *depth,
+                }),
+            };
+            blockers.extend(blocker);
+        }
+        blockers.sort_by_key(|blocker| (blocker.depth, blocker.reason as u8, blocker.node_kind));
+        ExportCoverage {
+            reachable: depths.len(),
+            blockers,
+        }
     }
     fn rewrite_children(
         &mut self,
@@ -495,4 +743,68 @@ impl DensityCompiler {
             operation,
         }))
     }
+}
+
+fn graph_node_name(node: &GraphNode) -> &'static str {
+    match node {
+        GraphNode::Constant(_) => "Constant",
+        GraphNode::Spline(_) => "Spline",
+        GraphNode::Noise { .. } => "Noise",
+        GraphNode::OffsetNoise { .. } => "OffsetNoise",
+        GraphNode::BlendedNoise(_) => "BlendedNoise",
+        GraphNode::EndIslands => "EndIslands",
+        GraphNode::WorldField(_) => "WorldField",
+        GraphNode::BlendDensity(_) => "BlendDensity",
+        GraphNode::Reference { .. } => "Reference",
+        GraphNode::Gradient { .. } => "Gradient",
+        GraphNode::Unary { .. } => "Unary",
+        GraphNode::Binary { .. } => "Binary",
+        GraphNode::Round { .. } => "Round",
+        GraphNode::Power { .. } => "Power",
+        GraphNode::Clamp { .. } => "Clamp",
+        GraphNode::Choice { .. } => "Choice",
+        GraphNode::Lerp { .. } => "Lerp",
+        GraphNode::Slice { .. } => "Slice",
+        GraphNode::Cache(_) => "Cache",
+        GraphNode::Interpolated { .. } => "Interpolated",
+        GraphNode::Surface { .. } => "Surface",
+        GraphNode::IntervalSelect { .. } => "IntervalSelect",
+        GraphNode::DistanceToPoint { .. } => "DistanceToPoint",
+    }
+}
+
+fn export_node_failure(node: &GraphNode) -> Option<ProgramExportError> {
+    let (reason, supported) = match node {
+        GraphNode::Constant(_)
+        | GraphNode::Reference { .. }
+        | GraphNode::Lerp { .. }
+        | GraphNode::Cache(_) => (ProgramExportReason::UnsupportedOperation, true),
+        GraphNode::Binary { .. } | GraphNode::Clamp { .. } => {
+            (ProgramExportReason::UnsupportedOperation, true)
+        }
+        GraphNode::Unary { kind, .. } => (
+            ProgramExportReason::UnsupportedOperation,
+            !matches!(kind, GraphUnary::Sqrt | GraphUnary::Log),
+        ),
+        GraphNode::Noise { .. }
+        | GraphNode::OffsetNoise { .. }
+        | GraphNode::BlendedNoise(_)
+        | GraphNode::EndIslands => (ProgramExportReason::NoiseKind, false),
+        GraphNode::WorldField(_)
+        | GraphNode::BlendDensity(_)
+        | GraphNode::Slice { .. }
+        | GraphNode::Interpolated { .. }
+        | GraphNode::Surface { .. } => (ProgramExportReason::NeedsContext, false),
+        GraphNode::Spline(_)
+        | GraphNode::Gradient { .. }
+        | GraphNode::Round { .. }
+        | GraphNode::Power { .. }
+        | GraphNode::Choice { .. }
+        | GraphNode::IntervalSelect { .. }
+        | GraphNode::DistanceToPoint { .. } => (ProgramExportReason::UnsupportedOperation, false),
+    };
+    (!supported).then(|| ProgramExportError {
+        node_kind: graph_node_name(node),
+        reason,
+    })
 }

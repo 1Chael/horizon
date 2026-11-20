@@ -8,6 +8,7 @@ mod seeded;
 #[cfg(test)]
 mod tests;
 pub use compiler::DensityCompiler;
+pub use compiler::{ExportBlocker, ExportCoverage, ProgramExportError, ProgramExportReason};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct FunctionId(usize);
@@ -533,6 +534,31 @@ impl DensityGraph {
     }
     /// Register a noise under its canonical namespaced registry identifier.
     /// Definitions and names are immutable after registration.
+    /// Replace an existing definition with a precompiled sampler, keeping the
+    /// function's identity and its parents' references. Used to substitute a
+    /// precomputed leaf volume (for example one produced on a GPU) without
+    /// rebuilding the graph. Call it before compiling the root.
+    pub fn rebind(
+        &mut self,
+        id: FunctionId,
+        sampler: Arc<dyn DensitySampler>,
+        range: Interval,
+        axes: u8,
+    ) -> Result<(), CompileError> {
+        if axes & !7 != 0 {
+            return Err(CompileError::InvalidAxes);
+        }
+        let entry = self
+            .entries
+            .get_mut(id.0)
+            .ok_or(CompileError::UnknownFunction)?;
+        entry.definition = Definition::Bound {
+            sampler,
+            range,
+            axes,
+        };
+        Ok(())
+    }
     pub fn register_noise(
         &mut self,
         name: String,

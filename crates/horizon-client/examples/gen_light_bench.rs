@@ -5,7 +5,11 @@
 //!
 //!     cargo run --release -p horizon-client-lib --example gen_light_bench -- \
 //!         .local/horizon-client/26.3 [--seed 1234] [--center CX CZ] [--radius 12]
-//!         [--threads 1,2,4,8] [--period-ms 2] [--repeat 1] [--json]
+//!         [--threads 1,2,4,8] [--period-ms 2] [--repeat 1] [--json] [--mesh]
+//!
+//! Meshing jobs (`streaming.mesh`) are off by default; `--mesh` turns them on
+//! so the benchmark can include the mesh stage (the flag is additive; the
+//! default is unchanged).
 //!
 //! For each run it prints the wall time until every column within the radius
 //! (the area Streaming finishes) was lit, columns finished and lit per second, the process's CPU seconds per
@@ -116,9 +120,10 @@ fn run<G: ChunkGenerator>(
     radius: i32,
     threads: usize,
     period: Duration,
+    mesh: bool,
 ) -> Result<Run, Error> {
     let mut streaming = Streaming::new(Arc::new(generator), context.clone(), threads);
-    streaming.mesh = false;
+    streaming.mesh = mesh;
     streaming.center = center;
     streaming.radius = radius;
     let mut world = World::new(BlockStateId(0), 0);
@@ -212,6 +217,7 @@ fn main() -> Result<(), Error> {
     let radius: i32 = flag(&args, "--radius", 12);
     let repeat: usize = flag(&args, "--repeat", 1);
     let period = Duration::from_millis(flag(&args, "--period-ms", 2));
+    let mesh = args.iter().any(|a| a == "--mesh");
     let json = args.iter().any(|a| a == "--json");
     let simulate: Option<Vec<f64>> = args
         .iter()
@@ -287,7 +293,7 @@ fn main() -> Result<(), Error> {
         render,
     });
     let terrain = || VanillaTerrain::new(&root.join("worldgen"), assets.registry, &biomes, seed);
-    let go = |center, radius, n| -> Result<Run, Error> {
+    let go = |center, radius, n, mesh| -> Result<Run, Error> {
         match &simulate {
             Some(ms) => {
                 let ms = |i: usize| Duration::from_secs_f64(ms[i] / 1e3);
@@ -296,22 +302,23 @@ fn main() -> Result<(), Error> {
                     decorate: ms(1),
                     finish: ms(2),
                 };
-                run(generator, &context, center, radius, n, period)
+                run(generator, &context, center, radius, n, period, mesh)
             }
-            None => run(terrain()?, &context, center, radius, n, period),
+            None => run(terrain()?, &context, center, radius, n, period, mesh),
         }
     };
     // Warm the shared generator data and the code away from the measured area.
-    go((center.0 + 4000, center.1), 2, n)?;
+    go((center.0 + 4000, center.1), 2, n, false)?;
     let pool = horizon_threads::jobs::pool().threads();
     if pool != n {
         eprintln!("the worker pool has {pool} threads, not {n} (HORIZON_JOB_THREADS?)");
     }
-    let r = go(center, radius, n)?;
+    let r = go(center, radius, n, mesh)?;
     let busy: f64 = r.jobs.iter().map(|j| j.1 as f64).sum::<f64>() / 1e9;
     println!(
-        "workers {n:2}: {:.2} s ({:.2} s to half), {} columns ({} lit), {:.1} columns/s, {:.1} lit/s, \
+        "workers {n:2}{}: {:.2} s ({:.2} s to half), {} columns ({} lit), {:.1} columns/s, {:.1} lit/s, \
          {:.1} ms CPU/column, coordinator {:.2} s CPU in {} updates, workers busy {:.0}%, checksum {:016x}",
+        if mesh { " (mesh)" } else { "" },
         r.wall,
         r.half,
         r.columns,

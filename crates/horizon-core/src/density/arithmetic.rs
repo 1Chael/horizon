@@ -34,7 +34,7 @@ pub(super) fn java_max(a: f32, b: f32) -> f32 {
         b
     }
 }
-fn clamp(value: f32, min: f32, max: f32) -> f32 {
+pub(super) fn clamp(value: f32, min: f32, max: f32) -> f32 {
     if value < min {
         min
     } else {

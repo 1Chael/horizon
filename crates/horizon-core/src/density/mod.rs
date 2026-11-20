@@ -32,6 +32,8 @@ mod selection;
 pub use rounding::{RoundMode, RoundSampler};
 mod power;
 pub use power::{PowerSampler, compile_constant_exponent};
+pub mod program;
+pub mod spirv;
 mod slice;
 pub use slice::{SliceAxes, SliceSampler};
 mod spline;

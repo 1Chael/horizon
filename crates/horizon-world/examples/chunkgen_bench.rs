@@ -321,8 +321,16 @@ fn main() -> Result<(), Error> {
         verify(&data, &parity)?;
     }
     let start = Instant::now();
-    let generator =
-        OverworldGenerator::for_dimension(data.clone(), seed, "minecraft:normal", &dimension)?;
+    // `CHUNKGEN_NO_STRUCTURES=1` builds the generator without the structures
+    // registry, to isolate the structures stage's cost from the rest of
+    // proto generation. Behavioural parity then no longer holds; this is a
+    // diagnostic switch, not a configuration anyone should ship.
+    let no_structures = std::env::var_os("CHUNKGEN_NO_STRUCTURES").is_some();
+    let generator = if no_structures {
+        OverworldGenerator::without_structures(data.clone(), seed)?
+    } else {
+        OverworldGenerator::for_dimension(data.clone(), seed, "minecraft:normal", &dimension)?
+    };
     if std::env::var_os("HORIZON_LIST_UNSUPPORTED").is_some() {
         for (feature, error) in generator.unsupported_features() {
             println!("unsupported {feature}: {error}");
