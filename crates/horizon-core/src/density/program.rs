@@ -186,15 +186,11 @@ impl DensityProgram {
             Self::Offset { input, delta } => input.evaluate_fma(offset_sample(sample, *delta)),
             Self::Add(left, right) => left.evaluate_fma(sample) + right.evaluate_fma(sample),
             Self::Multiply(left, right) => left.evaluate_fma(sample) * right.evaluate_fma(sample),
-            Self::Clamp { input, min, max } => {
-                clamp_value(input.evaluate_fma(sample), *min, *max)
-            }
+            Self::Clamp { input, min, max } => clamp_value(input.evaluate_fma(sample), *min, *max),
             Self::Unary { kind, input } => unary_value(*kind, input.evaluate_fma(sample)),
-            Self::Binary { kind, left, right } => binary_value(
-                *kind,
-                left.evaluate_fma(sample),
-                right.evaluate_fma(sample),
-            ),
+            Self::Binary { kind, left, right } => {
+                binary_value(*kind, left.evaluate_fma(sample), right.evaluate_fma(sample))
+            }
         }
     }
 
@@ -330,7 +326,7 @@ impl DensityProgram {
                     }
                     UnaryKind::Reciprocal => format!("(1.0 / {value})"),
                     UnaryKind::Sign => format!(
-                        "select(select(-1.0, 1.0, {value} > 0.0), {value}, {value} == 0.0 || isNan({value}))"
+                        "select(select(-1.0, 1.0, {value} > 0.0), {value}, {value} == 0.0 || is_nan_f({value}))"
                     ),
                     UnaryKind::Squeeze => format!("squeeze({value})"),
                 }
@@ -589,15 +585,20 @@ fn lerp3_fma(fx: f32, fy: f32, fz: f32, v: array<f32, 8>) -> f32 {
     return lerp1_fma(fz, lerp2_fma(fx, fy, v[0], v[1], v[2], v[3]),
                      lerp2_fma(fx, fy, v[4], v[5], v[6], v[7]));
 }
+fn is_nan_f(value: f32) -> bool {
+    // WGSL has no isNan builtin; a NaN has all exponent bits set and a
+    // non-zero mantissa.
+    return (bitcast<u32>(value) & 0x7fffffffu) > 0x7f800000u;
+}
 fn java_min_f(a: f32, b: f32) -> f32 {
-    if (isNan(a) || isNan(b)) { return bitcast<f32>(0x7fc00000u); }
+    if (is_nan_f(a) || is_nan_f(b)) { return bitcast<f32>(0x7fc00000u); }
     if (a == 0.0 && b == 0.0) {
         return bitcast<f32>(bitcast<u32>(a) | bitcast<u32>(b));
     }
     return select(b, a, a <= b);
 }
 fn java_max_f(a: f32, b: f32) -> f32 {
-    if (isNan(a) || isNan(b)) { return bitcast<f32>(0x7fc00000u); }
+    if (is_nan_f(a) || is_nan_f(b)) { return bitcast<f32>(0x7fc00000u); }
     if (a == 0.0 && b == 0.0) {
         return bitcast<f32>(bitcast<u32>(a) & bitcast<u32>(b));
     }
@@ -606,8 +607,7 @@ fn java_max_f(a: f32, b: f32) -> f32 {
 fn clamp_value(value: f32, min: f32, max: f32) -> f32 {
     if (value < min) { return min; }
     return java_min_f(value, max);
-}
-fn squeeze(value: f32) -> f32 {
+}fn squeeze(value: f32) -> f32 {
     let v = clamp_value(value, -1.0, 1.0);
     return v / 2.0 - v * v * v / 24.0;
 }

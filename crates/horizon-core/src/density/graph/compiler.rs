@@ -116,8 +116,34 @@ impl DensityCompiler {
             GraphNode::Constant(value) => Ok(DensityProgram::Constant(*value)),
             GraphNode::Reference { input, .. } => self.try_export_to_program(*input),
             GraphNode::Binary { kind, left, right } => {
-                let left = Box::new(self.try_export_to_program(*left)?);
-                let right = Box::new(self.try_export_to_program(*right)?);
+                let left_program = Box::new(self.try_export_to_program(*left)?);
+                let right_program = Box::new(self.try_export_to_program(*right)?);
+                // `compile_binary` folds a constant right operand before it
+                // builds the sampler. Mirror those two rewrites exactly:
+                // `x - c` becomes `x + -c`, and `x / c` becomes
+                // `x * (1.0 / c)`. Emitting a raw divide here would differ
+                // from the compiled sampler by rounding for some inputs.
+                if let Some(value) = self.export_constant(*right) {
+                    if self.export_constant(*left).is_none() {
+                        match kind {
+                            GraphBinary::Subtract => {
+                                return Ok(DensityProgram::Binary {
+                                    kind: BinaryKind::Add,
+                                    left: left_program,
+                                    right: Box::new(DensityProgram::Constant(-value)),
+                                });
+                            }
+                            GraphBinary::Divide => {
+                                return Ok(DensityProgram::Binary {
+                                    kind: BinaryKind::Multiply,
+                                    left: left_program,
+                                    right: Box::new(DensityProgram::Constant(1.0 / value)),
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 let kind = match kind {
                     GraphBinary::Add => BinaryKind::Add,
                     GraphBinary::Subtract => BinaryKind::Subtract,
@@ -126,7 +152,11 @@ impl DensityCompiler {
                     GraphBinary::Minimum => BinaryKind::Minimum,
                     GraphBinary::Maximum => BinaryKind::Maximum,
                 };
-                Ok(DensityProgram::Binary { kind, left, right })
+                Ok(DensityProgram::Binary {
+                    kind,
+                    left: left_program,
+                    right: right_program,
+                })
             }
             GraphNode::Lerp {
                 alpha,
@@ -390,6 +420,16 @@ impl DensityCompiler {
     fn constant(&self, id: FunctionId) -> Option<f32> {
         match self.graph.entries[id.0].definition {
             Definition::Node(GraphNode::Constant(value)) => Some(value),
+            _ => None,
+        }
+    }
+    /// Constant lookup for the exporter. `prepare` unwraps a `Reference` before
+    /// `compile_binary` runs, so the exporter must look through it too or it
+    /// would take a different branch than the compiled sampler.
+    fn export_constant(&self, id: FunctionId) -> Option<f32> {
+        match self.graph.entries[id.0].definition {
+            Definition::Node(GraphNode::Constant(value)) => Some(value),
+            Definition::Node(GraphNode::Reference { input, .. }) => self.export_constant(input),
             _ => None,
         }
     }

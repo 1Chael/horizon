@@ -664,3 +664,41 @@ fn compiler_reduces_uniform_axes_and_preserves_strided_vertical_samples() {
     assert_eq!(output[volume.size()], 17.0);
     assert_eq!(compiler.graph().domain_axes(root), Ok(2));
 }
+
+#[test]
+fn export_matches_compiled_constant_divisor_rewrite() {
+    // This value is a sample where `x / 3.0` and `x * (1.0 / 3.0)` differ by
+    // one ulp, so a raw divide in the exported program would fail the bit
+    // comparison below.
+    let x = 69.486_747_741_699_22f32;
+    assert_ne!((x / 3.0).to_bits(), (x * (1.0 / 3.0)).to_bits());
+
+    let mut graph = DensityGraph::new();
+    let constant = graph.insert(GraphNode::Constant(x)).unwrap();
+    // A unary node is not a `constant()` to the compiler, so the divide takes
+    // the constant-right path under test rather than constant-left folding.
+    let left = graph
+        .insert(GraphNode::Unary {
+            kind: GraphUnary::Abs,
+            input: constant,
+        })
+        .unwrap();
+    let three = graph.insert(GraphNode::Constant(3.0)).unwrap();
+    let root = graph
+        .insert(GraphNode::Binary {
+            kind: GraphBinary::Divide,
+            left,
+            right: three,
+        })
+        .unwrap();
+    let mut compiler = DensityCompiler::new(graph);
+    let program = compiler.try_export_to_program(root).unwrap();
+    let sampler = compiler.get_sampler(root).unwrap();
+    let volume = DensityVolume::new([1; 3], [0; 3], [1; 3]).unwrap();
+    let mut expected = vec![0.0; volume.size()];
+    sampler
+        .sample_volume(&mut SamplerContext::default(), &mut expected, volume)
+        .unwrap();
+    let actual = program.evaluate(crate::density::program::PerlinSample::default());
+    assert_eq!(expected[0].to_bits(), actual.to_bits());
+}

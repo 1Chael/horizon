@@ -65,6 +65,7 @@ struct Ids {
     p_pu32: u32,
     p_pv4f: u32,
     p_pv4i: u32,
+    p_pv3i: u32,
     p_in_v3u: u32,
     perm: u32,
     grads: u32,
@@ -113,6 +114,7 @@ impl Emitter {
                 p_pu32: 0,
                 p_pv4f: 0,
                 p_pv4i: 0,
+                p_pv3i: 0,
                 p_in_v3u: 0,
                 perm: 0,
                 grads: 0,
@@ -124,10 +126,42 @@ impl Emitter {
             },
         };
         let names = [
-            "void", "fn_ty", "bool_ty", "i32", "u32", "f32", "v3i", "v3u", "v4i", "v4f",
-            "point", "rt_point", "rt_f", "rt_u", "rt_v4f", "buf_points", "buf_f", "buf_u",
-            "buf_v4f", "p_points", "p_f", "p_u", "p_v4f", "p_pf32", "p_pu32", "p_pv4f",
-            "p_pv4i", "p_in_v3u", "perm", "grads", "out", "points", "gid", "glsl", "main",
+            "void",
+            "fn_ty",
+            "bool_ty",
+            "i32",
+            "u32",
+            "f32",
+            "v3i",
+            "v3u",
+            "v4i",
+            "v4f",
+            "point",
+            "rt_point",
+            "rt_f",
+            "rt_u",
+            "rt_v4f",
+            "buf_points",
+            "buf_f",
+            "buf_u",
+            "buf_v4f",
+            "p_points",
+            "p_f",
+            "p_u",
+            "p_v4f",
+            "p_pf32",
+            "p_pu32",
+            "p_pv4f",
+            "p_pv4i",
+            "p_pv3i",
+            "p_in_v3u",
+            "perm",
+            "grads",
+            "out",
+            "points",
+            "gid",
+            "glsl",
+            "main",
         ];
         for name in names {
             let id = e.id();
@@ -159,6 +193,7 @@ impl Emitter {
                 "p_pu32" => e.ids.p_pu32 = id,
                 "p_pv4f" => e.ids.p_pv4f = id,
                 "p_pv4i" => e.ids.p_pv4i = id,
+                "p_pv3i" => e.ids.p_pv3i = id,
                 "p_in_v3u" => e.ids.p_in_v3u = id,
                 "perm" => e.ids.perm = id,
                 "grads" => e.ids.grads = id,
@@ -209,8 +244,14 @@ impl Emitter {
             "%{} = OpTypePointer StorageBuffer %{}",
             i.p_points, i.buf_points
         ));
-        t.push(format!("%{} = OpTypePointer StorageBuffer %{}", i.p_f, i.buf_f));
-        t.push(format!("%{} = OpTypePointer StorageBuffer %{}", i.p_u, i.buf_u));
+        t.push(format!(
+            "%{} = OpTypePointer StorageBuffer %{}",
+            i.p_f, i.buf_f
+        ));
+        t.push(format!(
+            "%{} = OpTypePointer StorageBuffer %{}",
+            i.p_u, i.buf_u
+        ));
         t.push(format!(
             "%{} = OpTypePointer StorageBuffer %{}",
             i.p_v4f, i.buf_v4f
@@ -232,9 +273,10 @@ impl Emitter {
             i.p_pv4i, i.v4i
         ));
         t.push(format!(
-            "%{} = OpTypePointer Input %{}",
-            i.p_in_v3u, i.v3u
+            "%{} = OpTypePointer StorageBuffer %{}",
+            i.p_pv3i, i.v3i
         ));
+        t.push(format!("%{} = OpTypePointer Input %{}", i.p_in_v3u, i.v3u));
         t.push(format!("%{} = OpVariable %{} StorageBuffer", i.perm, i.p_u));
         t.push(format!(
             "%{} = OpVariable %{} StorageBuffer",
@@ -245,15 +287,12 @@ impl Emitter {
             "%{} = OpVariable %{} StorageBuffer",
             i.points, i.p_points
         ));
-        t.push(format!(
-            "%{} = OpVariable %{} Input",
-            i.gid, i.p_in_v3u
-        ));
+        t.push(format!("%{} = OpVariable %{} Input", i.gid, i.p_in_v3u));
 
         let d = &mut self.decorations;
         d.push(format!("OpDecorate %{} Block", i.buf_points));
         d.push(format!("OpMemberDecorate %{} 0 Offset 0", i.buf_points));
-        d.push(format!("OpDecorate %{} ArrayStride 56", i.rt_point));
+        d.push(format!("OpDecorate %{} ArrayStride 64", i.rt_point));
         d.push(format!("OpDecorate %{} Block", i.buf_f));
         d.push(format!("OpMemberDecorate %{} 0 Offset 0", i.buf_f));
         d.push(format!("OpDecorate %{} ArrayStride 4", i.rt_f));
@@ -313,8 +352,10 @@ impl Emitter {
             return id;
         }
         let id = self.id();
-        self.types
-            .push(format!("%{id} = OpConstant %{} !0x{bits:08x}", self.ids.f32));
+        self.types.push(format!(
+            "%{id} = OpConstant %{} !0x{bits:08x}",
+            self.ids.f32
+        ));
         self.f32_consts.insert(bits, id);
         id
     }
@@ -328,7 +369,8 @@ impl Emitter {
     fn float_op(&mut self, opcode: &str, a: u32, b: u32) -> u32 {
         let f = self.ids.f32;
         let id = self.op(format!("{opcode} %{f} %{a} %{b}"));
-        self.decorations.push(format!("OpDecorate %{id} NoContraction"));
+        self.decorations
+            .push(format!("OpDecorate %{id} NoContraction"));
         id
     }
 
@@ -407,14 +449,12 @@ impl Emitter {
 
     fn index1(&mut self, vector: u32, index: u32) -> u32 {
         let ty = self.ids.i32;
-        let idx = self.u32_const(index);
-        self.op(format!("OpCompositeExtract %{ty} %{vector} {idx}"))
+        self.op(format!("OpCompositeExtract %{ty} %{vector} {index}"))
     }
 
     fn indexf(&mut self, vector: u32, index: u32) -> u32 {
         let ty = self.ids.f32;
-        let idx = self.u32_const(index);
-        self.op(format!("OpCompositeExtract %{ty} %{vector} {idx}"))
+        self.op(format!("OpCompositeExtract %{ty} %{vector} {index}"))
     }
 
     /// `java_min` from `arithmetic.rs`: NaN propagates, and when both operands
@@ -508,7 +548,7 @@ impl Emitter {
         let masked = self.iand(index, mask);
         let zero = self.i32_const(0);
         let (perm, ty) = (self.ids.perm, self.ids.p_pu32);
-        let elem = self.op(format!("OpAccessChain %{ty} %{perm} {zero} {masked}"));
+        let elem = self.op(format!("OpAccessChain %{ty} %{perm} %{zero} %{masked}"));
         let u = self.ids.u32;
         let raw = self.op(format!("OpLoad %{u} %{elem}"));
         let i = self.ids.i32;
@@ -521,7 +561,7 @@ impl Emitter {
         let idx = self.iand(p, fifteen);
         let zero = self.i32_const(0);
         let (grads, v4f, ty) = (self.ids.grads, self.ids.v4f, self.ids.p_pv4f);
-        let elem = self.op(format!("OpAccessChain %{ty} %{grads} {zero} {idx}"));
+        let elem = self.op(format!("OpAccessChain %{ty} %{grads} %{zero} %{idx}"));
         let g = self.op(format!("OpLoad %{v4f} %{elem}"));
         let gx = self.indexf(g, 0);
         let gy = self.indexf(g, 1);
@@ -551,7 +591,9 @@ impl Emitter {
         let upper = self.permute(p_cy1);
         let lower_x = self.permute(q_cy);
         let upper_x = self.permute(q_cy1);
-        let rows = [lower, lower_x, upper, upper_x, lower, lower_x, upper, upper_x];
+        let rows = [
+            lower, lower_x, upper, upper_x, lower, lower_x, upper, upper_x,
+        ];
         let onef = self.f32_const(1.0);
         let dx1 = self.fsub(dx, onef);
         let dy1 = self.fsub(dy, onef);
@@ -813,8 +855,7 @@ impl DensityProgram {
         };
         let merge = e.id();
         let body_label = e.id();
-        e.body
-            .push(format!("OpSelectionMerge %{merge} None"));
+        e.body.push(format!("OpSelectionMerge %{merge} None"));
         e.body
             .push(format!("OpBranchConditional %{inb} %{body_label} %{merge}"));
         e.body.push(format!("%{body_label} = OpLabel"));
@@ -831,29 +872,23 @@ impl DensityProgram {
         let load_vec = |e: &mut Emitter, member: u32, ty: u32, ptr_ty: u32| {
             let points = e.ids.points;
             let ptr = e.op(format!(
-                "OpAccessChain %{ptr_ty} %{points} {zero_i} %{pti} {member}"
+                "OpAccessChain %{ptr_ty} %{points} %{zero_i} %{pti} %{member}"
             ));
             e.op(format!("OpLoad %{ty} %{ptr}"))
         };
         let cell = load_vec(&mut e, zero_i, i.v4i, i.p_pv4i);
         let off = load_vec(&mut e, one_i, i.v4f, i.p_pv4f);
-        let block = load_vec(&mut e, two_i, i.v3i, i.p_pv4i);
+        let block = load_vec(&mut e, two_i, i.v3i, i.p_pv3i);
         let fade_y = load_vec(&mut e, three_i, i.f32, i.p_pf32);
         let amp = load_vec(&mut e, four_i, i.f32, i.p_pf32);
         let _ = block;
 
-        let ctx = Context {
-            cell,
-            off,
-            fade_y,
-        };
+        let ctx = Context { cell, off, fade_y };
         let value = e.emit(ctx, self);
         let scaled = e.fmul(amp, value);
         let out_ptr = {
-            let (out, ty) = (i.out, i.p_f);
-            e.op(format!(
-                "OpAccessChain %{ty} %{out} {zero_i} %{ix}"
-            ))
+            let (out, ty) = (i.out, i.p_pf32);
+            e.op(format!("OpAccessChain %{ty} %{out} %{zero_i} %{ix}"))
         };
         e.body.push(format!("OpStore %{out_ptr} %{scaled}"));
         e.body.push(format!("OpBranch %{merge}"));
@@ -867,10 +902,7 @@ impl DensityProgram {
             "; Contract: every float add/sub/mul/div carries NoContraction; mul_add sites are Fma.\n",
         );
         out.push_str("OpCapability Shader\n");
-        out.push_str(&format!(
-            "%{} = OpExtInstImport \"GLSL.std.450\"\n",
-            i.glsl
-        ));
+        out.push_str(&format!("%{} = OpExtInstImport \"GLSL.std.450\"\n", i.glsl));
         out.push_str("OpMemoryModel Logical GLSL450\n");
         out.push_str(&format!(
             "OpEntryPoint GLCompute %{} \"main\" %{} %{} %{} %{} %{}\n",
@@ -885,11 +917,133 @@ impl DensityProgram {
             out.push_str(ty);
             out.push('\n');
         }
-        out.push_str(&format!("%{} = OpFunction %{} None %{}\n", i.main, i.void, i.fn_ty));
+        out.push_str(&format!(
+            "%{} = OpFunction %{} None %{}\n",
+            i.main, i.void, i.fn_ty
+        ));
         for instruction in &e.body {
             out.push_str(instruction);
             out.push('\n');
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::program::{DensityProgram, PerlinProgram};
+    use std::process::Command;
+
+    /// Assemble and validate an emitted module. The tools are a developer
+    /// dependency, so a missing `spirv-as` skips instead of failing; a tool
+    /// that runs and rejects the module is always a test failure.
+    fn validate(label: &str, module: &str) {
+        let dir =
+            std::env::temp_dir().join(format!("horizon-spirv-{label}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let spvasm = dir.join("module.spvasm");
+        let spv = dir.join("module.spv");
+        std::fs::write(&spvasm, module).expect("write spirv text");
+        let assembled = match Command::new("spirv-as")
+            .arg("--target-env")
+            .arg("vulkan1.3")
+            .arg(&spvasm)
+            .arg("-o")
+            .arg(&spv)
+            .output()
+        {
+            Ok(output) => output,
+            Err(error) => {
+                eprintln!("skipping SPIR-V validation: spirv-as unavailable ({error})");
+                let _ = std::fs::remove_dir_all(&dir);
+                return;
+            }
+        };
+        assert!(
+            assembled.status.success(),
+            "spirv-as rejected the module:\n{}\n--- module ---\n{module}",
+            String::from_utf8_lossy(&assembled.stderr)
+        );
+        let validated = Command::new("spirv-val")
+            .arg("--target-env")
+            .arg("vulkan1.3")
+            .arg(&spv)
+            .output()
+            .expect("run spirv-val");
+        assert!(
+            validated.status.success(),
+            "spirv-val rejected the module:\n{}",
+            String::from_utf8_lossy(&validated.stderr)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn constant_program_is_valid_spirv() {
+        validate(
+            "constant",
+            &DensityProgram::Constant(0.125).spirv("constant"),
+        );
+    }
+
+    #[test]
+    fn perlin_program_is_valid_spirv() {
+        let program = DensityProgram::Perlin(PerlinProgram::from_permutation(&[0u8; 256]));
+        validate("perlin", &program.spirv("perlin"));
+    }
+
+    #[test]
+    fn rung_two_program_is_valid_spirv() {
+        use super::super::program::{BinaryKind, UnaryKind};
+        let c = DensityProgram::Constant;
+        let clamp = DensityProgram::Clamp {
+            input: Box::new(c(0.5)),
+            min: -1.0,
+            max: 1.0,
+        };
+        let unary = DensityProgram::Unary {
+            kind: UnaryKind::Squeeze,
+            input: Box::new(DensityProgram::Unary {
+                kind: UnaryKind::Sign,
+                input: Box::new(c(-0.25)),
+            }),
+        };
+        let binary = DensityProgram::Binary {
+            kind: BinaryKind::Maximum,
+            left: Box::new(DensityProgram::Binary {
+                kind: BinaryKind::Minimum,
+                left: Box::new(clamp),
+                right: Box::new(c(-0.75)),
+            }),
+            right: Box::new(DensityProgram::Binary {
+                kind: BinaryKind::Divide,
+                left: Box::new(unary),
+                right: Box::new(c(3.0)),
+            }),
+        };
+        let lerp = DensityProgram::Lerp {
+            alpha: Box::new(c(0.375)),
+            first: Box::new(binary),
+            second: Box::new(DensityProgram::Unary {
+                kind: UnaryKind::Reciprocal,
+                input: Box::new(c(8.0)),
+            }),
+        };
+        validate("rung-two", &lerp.spirv("rung-two"));
+    }
+
+    #[test]
+    fn every_vector_extract_uses_a_literal_index() {
+        let program = DensityProgram::Perlin(PerlinProgram::from_permutation(&[0u8; 256]));
+        let module = program.spirv("perlin");
+        for line in module.lines() {
+            if let Some(rest) = line.split("OpCompositeExtract").nth(1) {
+                let index = rest.split_whitespace().last().expect("extract index");
+                assert!(
+                    index.parse::<u32>().is_ok(),
+                    "OpCompositeExtract needs a literal index, got `{index}`: {line}"
+                );
+            }
+        }
     }
 }
